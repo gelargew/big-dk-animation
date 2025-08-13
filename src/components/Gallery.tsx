@@ -12,15 +12,16 @@ export default function Gallery() {
     // Virtual scroll position driven purely by wheel events (imperative)
     const virtualYRef = useRef(0) // target position
     const displayedYRef = useRef(0) // eased position
-    const displayedScaleRef = useRef(1)
-    const targetScaleRef = useRef(1)
+    const displayedScaleRef = useRef(0.75)
+    const targetScaleRef = useRef(0.75)
     const lastWheelTsRef = useRef<number>(performance.now())
     const rafIdRef = useRef<number | null>(null)
     const resetScaleTimerRef = useRef<number | null>(null)
-    // Selection (step 2: smooth height easing, no centering yet)
+    // Selection (step 3: smooth height easing + centering + persistent expansion)
     const selectedIndexRef = useRef<number | null>(null)
     const targetSelectedHeightRef = useRef<number | null>(null)
     const displayedSelectedHeightRef = useRef<number | null>(null)
+    const expandedHeightsRef = useRef<Map<number, number>>(new Map())
     // Track current parent content height for better clamping during centering and wheel
     const parentHeightRef = useRef(0)
 
@@ -29,7 +30,7 @@ export default function Gallery() {
     // Note: buffer not needed with parent-scaling approach
 
     // Slot height is measured from the rendered first item height + GAP_PX
-    const [slotHeight, setSlotHeight] = useState<number>(300 + GAP_PX)
+    const [slotHeight, setSlotHeight] = useState<number>(500 + GAP_PX)
 
     const viewportHeight = typeof height === 'number' ? height : 800
     const totalHeight = slotHeight * galleryItems.length
@@ -56,15 +57,16 @@ export default function Gallery() {
         const Hloc1 = typeof height === 'number' ? height : 800
         const topPad = Math.round(Hloc1 * 0.2)
         const selectedIdx = selectedIndexRef.current
-        const selectedHeight = displayedSelectedHeightRef.current ?? Math.round(Hloc1 * 0.7)
+        const selectedHeight = displayedSelectedHeightRef.current ?? Math.round(Hloc1 * 0.6)
         const containerWidth = 500
         const baseRatio = baseItemHeight > 0 ? containerWidth / baseItemHeight : 0
         let cumulativeTop = topPad
         for (let i = 0; i < parent.children.length; i += 1) {
             const child = parent.children[i] as HTMLElement
             const isSel = selectedIdx !== null && i === selectedIdx
-            const itemH = isSel ? selectedHeight : baseItemHeight
-            const itemW = isSel && baseRatio > 0 ? Math.round(baseRatio * itemH) : containerWidth
+            const persisted = expandedHeightsRef.current.get(i)
+            const itemH = isSel ? selectedHeight : (persisted ?? baseItemHeight)
+            const itemW = baseRatio > 0 ? Math.round(baseRatio * itemH) : containerWidth
             const leftPx = Math.round((containerWidth - itemW) / 2)
             child.style.position = 'absolute'
             child.style.left = `${leftPx}px`
@@ -108,19 +110,26 @@ export default function Gallery() {
             if (selectedIndexRef.current !== null) {
                 const Hloc = typeof height === 'number' ? height : 800
                 const baseH = Math.max(0, slotHeight - GAP_PX)
-                const hTarget = targetSelectedHeightRef.current ?? Math.round(Hloc * 0.7)
+                const hTarget = targetSelectedHeightRef.current ?? Math.round(Hloc * 0.6)
                 targetSelectedHeightRef.current = hTarget
                 const hCurrent = displayedSelectedHeightRef.current ?? baseH
                 const hAlpha = 1 - Math.pow(0.001, dt)
                 const dh = hTarget - hCurrent
                 const nextH = Math.abs(dh) > 0.1 ? hCurrent + dh * hAlpha : hTarget
                 displayedSelectedHeightRef.current = nextH
-                // Recenter target Y using current displayed height
+                // Recenter target Y using FUTURE height (hTarget) and actual cumulative heights
                 const topPadLoc = Math.round(Hloc * 0.2)
-                const selectedTop = topPadLoc + selectedIndexRef.current * (baseH + GAP_PX)
-                const desiredY = selectedTop - (Hloc / 2 - nextH / 2)
+                let sumPrev = 0
+                for (let j = 0; j < (selectedIndexRef.current ?? 0); j += 1) {
+                    const persisted = expandedHeightsRef.current.get(j)
+                    const prevH = persisted ?? baseH
+                    sumPrev += prevH + GAP_PX
+                }
+                const selectedTop = topPadLoc + sumPrev
+                const desiredY = selectedTop - (Hloc / 2 - hTarget / 2)
                 const dynMaxY = Math.max(0, parentHeightRef.current - Hloc)
                 virtualYRef.current = Math.max(0, Math.min(dynMaxY, desiredY))
+                // Do not auto-deselect; persistence happens on wheel
             } else if (displayedSelectedHeightRef.current != null) {
                 const baseH = Math.max(0, slotHeight - GAP_PX)
                 const hCurrent = displayedSelectedHeightRef.current
@@ -133,8 +142,10 @@ export default function Gallery() {
                     targetSelectedHeightRef.current = null
                 }
             }
-            // Ease scale toward target
-            const scaleAlpha = 1 - Math.pow(0.05, dt)
+            // Ease scale toward target; when selected, match translate TC to keep perfect sync
+            const scaleAlpha = selectedIndexRef.current !== null
+                ? (1 - Math.pow(0.001, dt))
+                : (1 - Math.pow(0.05, dt))
             const ds = targetScaleRef.current - displayedScaleRef.current
             if (Math.abs(ds) > 0.001) {
                 displayedScaleRef.current += ds * scaleAlpha
@@ -153,6 +164,23 @@ export default function Gallery() {
         const onWheel = (e: WheelEvent) => {
             if (maxVirtualYRef.current <= 0) return
             e.preventDefault()
+            // If selected, persist current height and clear selection on first wheel
+            if (selectedIndexRef.current != null) {
+                const idx = selectedIndexRef.current
+                const baseH = Math.max(0, slotHeight - GAP_PX)
+                const currentH = displayedSelectedHeightRef.current ?? baseH
+                const Hloc = typeof height === 'number' ? height : 800
+                const targetH = targetSelectedHeightRef.current ?? Math.round(Hloc * 0.6)
+                // Persist whichever is closer to target for stability
+                const persistH = Math.abs((currentH) - targetH) < 1 ? targetH : currentH
+                expandedHeightsRef.current.set(idx, persistH)
+                // Clear selection state
+                selectedIndexRef.current = null
+                displayedSelectedHeightRef.current = null
+                targetSelectedHeightRef.current = null
+                // Return container scale model to scrolling/default handling
+                targetScaleRef.current = 0.75
+            }
             const now = performance.now()
             const dt = Math.max(1e-3, (now - lastWheelTsRef.current) / 1000)
             lastWheelTsRef.current = now
@@ -160,14 +188,17 @@ export default function Gallery() {
             const dynMaxY = Math.max(0, parentHeightRef.current - Hloc)
             const next = Math.max(0, Math.min(dynMaxY, virtualYRef.current + e.deltaY))
             if (next !== virtualYRef.current) virtualYRef.current = next
-            // Velocity in px/s from delta
-            const velocity = Math.abs(e.deltaY) / dt
-            // Map to [0,1] then to [1,0.9]
-            const speedFrac = Math.min(1, velocity / 3000)
-            targetScaleRef.current = 1 - 0.1 * speedFrac
+            // Scroll scale only when not in selection scale state
+            if (selectedIndexRef.current == null) {
+                const velocity = Math.abs(e.deltaY) / dt
+                const speedFrac = Math.min(1, velocity / 3000)
+                targetScaleRef.current = 0.75 - 0.1 * speedFrac // 0.75 → 0.65
+            }
             // Reset scale back to 1 shortly after idle
             if (resetScaleTimerRef.current) window.clearTimeout(resetScaleTimerRef.current)
-            resetScaleTimerRef.current = window.setTimeout(() => { targetScaleRef.current = 1 }, 150)
+            resetScaleTimerRef.current = window.setTimeout(() => {
+                if (selectedIndexRef.current == null) targetScaleRef.current = 0.75
+            }, 150)
         }
         el.addEventListener('wheel', onWheel, { passive: false })
         return () => {
@@ -176,19 +207,17 @@ export default function Gallery() {
         }
     }, [maxVirtualYRef])
 
-    // Click to toggle selection height (smooth height easing only)
+    // Click to select only (no deselect on click); if a selection is active, ignore clicks
     const onItemClick = useCallback((index: number) => {
+        if (selectedIndexRef.current != null) return
         const Hloc = typeof height === 'number' ? height : 800
         const baseH = Math.max(0, slotHeight - GAP_PX)
-        if (selectedIndexRef.current === index) {
-            selectedIndexRef.current = null
-            targetSelectedHeightRef.current = baseH
-            if (displayedSelectedHeightRef.current == null) displayedSelectedHeightRef.current = baseH
-        } else {
-            selectedIndexRef.current = index
-            targetSelectedHeightRef.current = Math.round(Hloc * 0.7)
-            if (displayedSelectedHeightRef.current == null) displayedSelectedHeightRef.current = baseH
-        }
+        selectedIndexRef.current = index
+        targetSelectedHeightRef.current = Math.round(Hloc * 0.6)
+        const persisted = expandedHeightsRef.current.get(index)
+        if (displayedSelectedHeightRef.current == null) displayedSelectedHeightRef.current = persisted ?? baseH
+        // Selection scale state: container scale to 1.0
+        targetScaleRef.current = 1.0
     }, [height, slotHeight])
 
     // Measure first item height when viewport changes (or on mount)
