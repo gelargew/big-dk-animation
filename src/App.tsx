@@ -1,4 +1,5 @@
 import './App.css'
+import 'lenis/dist/lenis.css'
 import Gallery from './components/Gallery'
 
 function App() {

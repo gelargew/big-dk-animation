@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Tempus from 'tempus'
 import { useWindowSize } from 'hamo'
 import './Gallery.css'
 import { galleryItems } from './DATA'
@@ -9,10 +10,13 @@ export default function Gallery() {
     const { width, height } = useWindowSize()
 
     // Virtual scroll position driven purely by wheel events (imperative)
-    const virtualYRef = useRef(0)
+    const virtualYRef = useRef(0) // target position
+    const displayedYRef = useRef(0) // eased position
+    const displayedScaleRef = useRef(1)
+    const targetScaleRef = useRef(1)
+    const lastWheelTsRef = useRef<number>(performance.now())
     const rafIdRef = useRef<number | null>(null)
-    const currentScaleRef = useRef(1)
-    const scrollEndTimerRef = useRef<number | null>(null)
+    const resetScaleTimerRef = useRef<number | null>(null)
 
     // Desired visual gap between items
     const GAP_PX = 24
@@ -40,7 +44,7 @@ export default function Gallery() {
     const renderPositions = useCallback(() => {
         const parent = itemsContainerRef.current
         if (!parent) return
-        const scale = currentScaleRef.current
+        const scale = displayedScaleRef.current
         // Position children at their baseY; parent will handle scroll and scale transforms
         for (let i = 0; i < parent.children.length; i += 1) {
             const child = parent.children[i] as HTMLElement
@@ -54,58 +58,68 @@ export default function Gallery() {
     // Set parent height to unscaled total so layout math remains stable
     parent.style.height = `${slotHeight * galleryItems.length}px`
     parent.style.willChange = 'transform'
-    // Center horizontally and anchor scale at horizontal center, vertical center of viewport
-    const H = typeof height === 'number' ? height : 800
+    // Center horizontally; anchor vertical scaling at current displayed Y to avoid jumps
     parent.style.left = '50%'
-    parent.style.transformOrigin = '50% 0'
-    const anchorBaseY = virtualYRef.current + H / 2
-    const t = H / 2 - scale * anchorBaseY
+    const anchorY = displayedYRef.current
+    parent.style.transformOrigin = `50% ${anchorY}px`
+    const t = -displayedYRef.current
     parent.style.transform = `translateX(-50%) translateY(${t}px) scale(${scale})`
-    }, [slotHeight, height])
+    }, [slotHeight])
+    // Tempus-driven easing loop (translate and scale based on velocity)
+    useEffect(() => {
+        if (!Tempus.isPlaying) Tempus.play()
+        const unsubscribe = Tempus.add((_: number, dtArg: number) => {
+            let dt = typeof dtArg === 'number' ? dtArg : 0
+            if (dt > 1) dt = dt / 1000
+            if (dt <= 0) return
+            // Ease Y toward target with critically damped spring-like lerp
+            const posAlpha = 1 - Math.pow(0.001, dt) // frame-rate independent
+            const dy = virtualYRef.current - displayedYRef.current
+            if (Math.abs(dy) > 0.01) {
+                displayedYRef.current += dy * posAlpha
+            } else {
+                displayedYRef.current = virtualYRef.current
+            }
+            // Ease scale toward target
+            const scaleAlpha = 1 - Math.pow(0.05, dt)
+            const ds = targetScaleRef.current - displayedScaleRef.current
+            if (Math.abs(ds) > 0.001) {
+                displayedScaleRef.current += ds * scaleAlpha
+            } else {
+                displayedScaleRef.current = targetScaleRef.current
+            }
+            renderPositions()
+        }, { label: 'gallery-ease' })
+        return () => { if (unsubscribe) unsubscribe() }
+    }, [renderPositions])
+
+    // Wheel input: update target position and scale target from instantaneous velocity
     useEffect(() => {
         const el = containerRef.current
         if (!el) return
-        const handleWheel = (e: WheelEvent) => {
+        const onWheel = (e: WheelEvent) => {
             if (maxVirtualYRef.current <= 0) return
             e.preventDefault()
-            const next = Math.max(
-                0,
-                Math.min(
-                    maxVirtualYRef.current,
-                    virtualYRef.current + e.deltaY,
-                ),
-            )
-            if (next === virtualYRef.current) return
-            virtualYRef.current = next
-            // set scrolling scale
-            currentScaleRef.current = 0.9
-            if (scrollEndTimerRef.current != null)
-                window.clearTimeout(scrollEndTimerRef.current)
-            scrollEndTimerRef.current = window.setTimeout(() => {
-                currentScaleRef.current = 1
-                // schedule render to restore scale to 1
-                if (rafIdRef.current == null) {
-                    rafIdRef.current = requestAnimationFrame(() => {
-                        rafIdRef.current = null
-                        renderPositions()
-                    })
-                }
-            }, 180)
-            if (rafIdRef.current == null) {
-                rafIdRef.current = requestAnimationFrame(() => {
-                    rafIdRef.current = null
-                    renderPositions()
-                })
-            }
+            const now = performance.now()
+            const dt = Math.max(1e-3, (now - lastWheelTsRef.current) / 1000)
+            lastWheelTsRef.current = now
+            const next = Math.max(0, Math.min(maxVirtualYRef.current, virtualYRef.current + e.deltaY))
+            if (next !== virtualYRef.current) virtualYRef.current = next
+            // Velocity in px/s from delta
+            const velocity = Math.abs(e.deltaY) / dt
+            // Map to [0,1] then to [1,0.9]
+            const speedFrac = Math.min(1, velocity / 3000)
+            targetScaleRef.current = 1 - 0.1 * speedFrac
+            // Reset scale back to 1 shortly after idle
+            if (resetScaleTimerRef.current) window.clearTimeout(resetScaleTimerRef.current)
+            resetScaleTimerRef.current = window.setTimeout(() => { targetScaleRef.current = 1 }, 150)
         }
-        el.addEventListener('wheel', handleWheel, { passive: false })
+        el.addEventListener('wheel', onWheel, { passive: false })
         return () => {
-            el.removeEventListener('wheel', handleWheel)
-            if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current)
-            if (scrollEndTimerRef.current != null)
-                window.clearTimeout(scrollEndTimerRef.current)
+            el.removeEventListener('wheel', onWheel)
+            if (resetScaleTimerRef.current) window.clearTimeout(resetScaleTimerRef.current)
         }
-    }, [renderPositions])
+    }, [maxVirtualYRef])
 
     // Measure first item height when viewport changes (or on mount)
     useEffect(() => {
