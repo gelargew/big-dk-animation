@@ -24,10 +24,17 @@ export default function Gallery() {
     const expandedHeightsRef = useRef<Map<number, number>>(new Map())
     // Track current parent content height for better clamping during centering and wheel
     const parentHeightRef = useRef(0)
+    // Selection animation timing/anchors
+    const selAnimStartTsRef = useRef<number | null>(null)
+    const selAnimFromHRef = useRef<number | null>(null)
+    const selAnimDurMsRef = useRef<number>(2000)
+    const centerFromYRef = useRef<number | null>(null)
+    const centerToYRef = useRef<number | null>(null)
 
     // Desired visual gap between items
     const GAP_PX = 24
     const GAP = 24
+    const TIME_SCALE = 4 // 4x longer animations for translate/scale easing
     // Note: buffer not needed with parent-scaling approach
 
     // Slot height is measured from the rendered first item height + GAP_PX
@@ -99,37 +106,41 @@ export default function Gallery() {
             let dt = typeof dtArg === 'number' ? dtArg : 0
             if (dt > 1) dt = dt / 1000
             if (dt <= 0) return
-            // Ease Y toward target with critically damped spring-like lerp
-            const posAlpha = 1 - Math.pow(0.001, dt) // frame-rate independent
-            const dy = virtualYRef.current - displayedYRef.current
-            if (Math.abs(dy) > 0.01) {
-                displayedYRef.current += dy * posAlpha
-            } else {
-                displayedYRef.current = virtualYRef.current
-            }
-            // Smoothly ease selected item height toward target AND recenter
+            // When selected: drive height and centering with the same 2000ms easing
             if (selectedIndexRef.current !== null) {
                 const Hloc = typeof height === 'number' ? height : 800
                 const baseH = Math.max(0, slotHeight - GAP)
                 const hTarget = targetSelectedHeightRef.current ?? Math.round(Hloc * 0.6)
                 targetSelectedHeightRef.current = hTarget
                 const hCurrent = displayedSelectedHeightRef.current ?? baseH
-                const hAlpha = 1 - Math.pow(0.001, dt)
-                const dh = hTarget - hCurrent
-                const nextH = Math.abs(dh) > 0.1 ? hCurrent + dh * hAlpha : hTarget
+                // Power4.out easing based on Tempus time (monotonic)
+                const nowTs = performance.now()
+                if (!selAnimStartTsRef.current) selAnimStartTsRef.current = nowTs
+                if (selAnimFromHRef.current == null) selAnimFromHRef.current = hCurrent
+                const tSel = Math.max(0, Math.min(1, (nowTs - selAnimStartTsRef.current) / selAnimDurMsRef.current))
+                const easeSel = 1 - Math.pow(1 - tSel, 4)
+                const fromH = selAnimFromHRef.current ?? hCurrent
+                const nextH = fromH + (hTarget - fromH) * easeSel
                 displayedSelectedHeightRef.current = nextH
-                // Recenter target Y using FUTURE height (hTarget) and actual cumulative heights
-                const topPadLoc = Math.round(Hloc * 0.2)
-                let sumPrev = 0
-                for (let j = 0; j < (selectedIndexRef.current ?? 0); j += 1) {
-                    const persisted = expandedHeightsRef.current.get(j)
-                    const prevH = persisted ?? baseH
-                    sumPrev += prevH + GAP
+                // Compute final desired center Y ONCE (based on FUTURE hTarget) and ease to it with the same easing
+                if (centerFromYRef.current == null) centerFromYRef.current = displayedYRef.current
+                if (centerToYRef.current == null) {
+                    const topPadLoc = Math.round(Hloc * 0.2)
+                    let sumPrev = 0
+                    for (let j = 0; j < (selectedIndexRef.current ?? 0); j += 1) {
+                        const persisted = expandedHeightsRef.current.get(j)
+                        const prevH = persisted ?? baseH
+                        sumPrev += prevH + GAP
+                    }
+                    const selectedTop = topPadLoc + sumPrev
+                    const desiredYFinal = selectedTop - (Hloc / 2 - hTarget / 2)
+                    const dynMaxY = Math.max(0, parentHeightRef.current - Hloc)
+                    centerToYRef.current = Math.max(0, Math.min(dynMaxY, desiredYFinal))
                 }
-                const selectedTop = topPadLoc + sumPrev
-                const desiredY = selectedTop - (Hloc / 2 - hTarget / 2)
-                const dynMaxY = Math.max(0, parentHeightRef.current - Hloc)
-                virtualYRef.current = Math.max(0, Math.min(dynMaxY, desiredY))
+                const fromY = centerFromYRef.current ?? displayedYRef.current
+                const toY = centerToYRef.current ?? virtualYRef.current
+                displayedYRef.current = fromY + (toY - fromY) * easeSel
+                virtualYRef.current = toY
                 // Do not auto-deselect; persistence happens on wheel
             } else if (displayedSelectedHeightRef.current != null) {
                 const baseH = Math.max(0, slotHeight - GAP)
@@ -141,11 +152,24 @@ export default function Gallery() {
                 if (Math.abs(nextH - baseH) <= 0.1) {
                     displayedSelectedHeightRef.current = null
                     targetSelectedHeightRef.current = null
+                    selAnimStartTsRef.current = null
+                    selAnimFromHRef.current = null
+                    centerFromYRef.current = null
+                    centerToYRef.current = null
+                }
+            } else {
+                // Ease Y toward target with critically damped spring-like lerp when not selected
+                const posAlpha = 1 - Math.pow(0.001, dt)
+                const dy = virtualYRef.current - displayedYRef.current
+                if (Math.abs(dy) > 0.01) {
+                    displayedYRef.current += dy * posAlpha
+                } else {
+                    displayedYRef.current = virtualYRef.current
                 }
             }
-            // Ease scale toward target; when selected, match translate TC to keep perfect sync
+            // Ease scale toward target; slow ONLY when selected to match selection height timing
             const scaleAlpha = selectedIndexRef.current !== null
-                ? (1 - Math.pow(0.001, dt))
+                ? (1 - Math.pow(0.001, dt / TIME_SCALE))
                 : (1 - Math.pow(0.05, dt))
             const ds = targetScaleRef.current - displayedScaleRef.current
             if (Math.abs(ds) > 0.001) {
@@ -156,7 +180,7 @@ export default function Gallery() {
             renderPositions()
         }, { label: 'gallery-ease' })
         return () => { if (unsubscribe) unsubscribe() }
-    }, [renderPositions])
+    }, [renderPositions, height, slotHeight])
 
     // Wheel input: update target position and scale target from instantaneous velocity
     useEffect(() => {
@@ -206,17 +230,24 @@ export default function Gallery() {
             el.removeEventListener('wheel', onWheel)
             if (resetScaleTimerRef.current) window.clearTimeout(resetScaleTimerRef.current)
         }
-    }, [maxVirtualYRef])
+    }, [maxVirtualYRef, height, slotHeight])
 
     // Click to select only (no deselect on click); if a selection is active, ignore clicks
+
     const onItemClick = useCallback((index: number) => {
         if (selectedIndexRef.current != null) return
         const Hloc = typeof height === 'number' ? height : 800
-        const baseH = Math.max(0, slotHeight - GAP_PX)
+        const baseH = Math.max(0, slotHeight - GAP)
         selectedIndexRef.current = index
         targetSelectedHeightRef.current = Math.round(Hloc * 0.6)
         const persisted = expandedHeightsRef.current.get(index)
         if (displayedSelectedHeightRef.current == null) displayedSelectedHeightRef.current = persisted ?? baseH
+        // Start selection height animation clock
+        selAnimFromHRef.current = displayedSelectedHeightRef.current ?? baseH
+        selAnimStartTsRef.current = performance.now()
+        // Centering anchors
+        centerFromYRef.current = displayedYRef.current
+        centerToYRef.current = null // recomputed in tick with final target
         // Selection scale state: container scale to 1.0
         targetScaleRef.current = 1.0
     }, [height, slotHeight])
