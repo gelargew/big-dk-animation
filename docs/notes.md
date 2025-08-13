@@ -24,7 +24,7 @@
 ## Selection behavior
 - Change selected item height only (to 70% of viewport).
 - Compute absolute tops using cumulative layout with baseItemHeight = slotHeight − GAP and add GAP between items.
-- Center each frame using current displayed selectedHeight to avoid jumps.
+- Center each frame using current displayed selectedHeight to avoid jumps (set virtualY so selected midpoint aims for viewport center; let displayedY ease it).
 - Optionally disable wheel during selection animation to prevent races.
 
 ## Gaps and parent height
@@ -35,5 +35,6 @@
 - If scale looks ahead/behind translate: ensure transformOrigin and translateY formula are correct and easing constants match.
 - If vertical jump on release: verify center anchoring (viewport) not content anchoring.
 - If gaps vanish: confirm cumulative layout uses baseItemHeight and adds GAP every step.
+- If scale reset “feels late”: gate the idle scale reset until |virtualY − displayedY| < epsilon to keep perceived sync.
 
 

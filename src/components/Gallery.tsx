@@ -21,6 +21,8 @@ export default function Gallery() {
     const selectedIndexRef = useRef<number | null>(null)
     const targetSelectedHeightRef = useRef<number | null>(null)
     const displayedSelectedHeightRef = useRef<number | null>(null)
+    // Track current parent content height for better clamping during centering and wheel
+    const parentHeightRef = useRef(0)
 
     // Desired visual gap between items
     const GAP_PX = 24
@@ -51,24 +53,34 @@ export default function Gallery() {
         const scale = displayedScaleRef.current
         // Cumulative layout to support a single selected item with 70% viewport height
         const baseItemHeight = Math.max(0, slotHeight - GAP_PX)
-        const H = typeof height === 'number' ? height : 800
+        const Hloc1 = typeof height === 'number' ? height : 800
+        const topPad = Math.round(Hloc1 * 0.2)
         const selectedIdx = selectedIndexRef.current
-        const selectedHeight = displayedSelectedHeightRef.current ?? Math.round(H * 0.7)
-        let cumulativeTop = 0
+        const selectedHeight = displayedSelectedHeightRef.current ?? Math.round(Hloc1 * 0.7)
+        const containerWidth = 500
+        const baseRatio = baseItemHeight > 0 ? containerWidth / baseItemHeight : 0
+        let cumulativeTop = topPad
         for (let i = 0; i < parent.children.length; i += 1) {
             const child = parent.children[i] as HTMLElement
-            const itemH = selectedIdx !== null && i === selectedIdx ? selectedHeight : baseItemHeight
+            const isSel = selectedIdx !== null && i === selectedIdx
+            const itemH = isSel ? selectedHeight : baseItemHeight
+            const itemW = isSel && baseRatio > 0 ? Math.round(baseRatio * itemH) : containerWidth
+            const leftPx = Math.round((containerWidth - itemW) / 2)
             child.style.position = 'absolute'
-            child.style.left = '0px'
+            child.style.left = `${leftPx}px`
             child.style.top = `${cumulativeTop}px`
             child.style.height = `${itemH}px`
+            child.style.width = `${itemW}px`
             child.style.transform = 'none'
             child.style.transformOrigin = 'center'
             cumulativeTop += itemH + GAP_PX
         }
-        // Set parent height to unscaled total so layout math remains stable
-        const parentHeight = Math.max(0, cumulativeTop - GAP_PX)
+        // Set parent height; when selected, add bottom padding to allow centering near end
+        const Hloc2 = typeof height === 'number' ? height : 800
+        const bottomPad = Math.round(Hloc2 * 0.4)
+        const parentHeight = Math.max(0, cumulativeTop - GAP_PX) + bottomPad
         parent.style.height = `${parentHeight}px`
+        parentHeightRef.current = parentHeight
         parent.style.willChange = 'transform'
         // Center horizontally; anchor vertical scaling at current displayed Y to avoid jumps
         parent.style.left = '50%'
@@ -104,9 +116,11 @@ export default function Gallery() {
                 const nextH = Math.abs(dh) > 0.1 ? hCurrent + dh * hAlpha : hTarget
                 displayedSelectedHeightRef.current = nextH
                 // Recenter target Y using current displayed height
-                const selectedTop = selectedIndexRef.current * (baseH + GAP_PX)
+                const topPadLoc = Math.round(Hloc * 0.2)
+                const selectedTop = topPadLoc + selectedIndexRef.current * (baseH + GAP_PX)
                 const desiredY = selectedTop - (Hloc / 2 - nextH / 2)
-                virtualYRef.current = Math.max(0, Math.min(maxVirtualYRef.current, desiredY))
+                const dynMaxY = Math.max(0, parentHeightRef.current - Hloc)
+                virtualYRef.current = Math.max(0, Math.min(dynMaxY, desiredY))
             } else if (displayedSelectedHeightRef.current != null) {
                 const baseH = Math.max(0, slotHeight - GAP_PX)
                 const hCurrent = displayedSelectedHeightRef.current
@@ -142,7 +156,9 @@ export default function Gallery() {
             const now = performance.now()
             const dt = Math.max(1e-3, (now - lastWheelTsRef.current) / 1000)
             lastWheelTsRef.current = now
-            const next = Math.max(0, Math.min(maxVirtualYRef.current, virtualYRef.current + e.deltaY))
+            const Hloc = typeof height === 'number' ? height : 800
+            const dynMaxY = Math.max(0, parentHeightRef.current - Hloc)
+            const next = Math.max(0, Math.min(dynMaxY, virtualYRef.current + e.deltaY))
             if (next !== virtualYRef.current) virtualYRef.current = next
             // Velocity in px/s from delta
             const velocity = Math.abs(e.deltaY) / dt
