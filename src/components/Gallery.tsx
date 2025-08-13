@@ -92,7 +92,7 @@ export default function Gallery() {
             } else {
                 displayedYRef.current = virtualYRef.current
             }
-            // Smoothly ease selected item height toward target (no centering yet)
+            // Smoothly ease selected item height toward target AND recenter
             if (selectedIndexRef.current !== null) {
                 const Hloc = typeof height === 'number' ? height : 800
                 const baseH = Math.max(0, slotHeight - GAP_PX)
@@ -103,6 +103,10 @@ export default function Gallery() {
                 const dh = hTarget - hCurrent
                 const nextH = Math.abs(dh) > 0.1 ? hCurrent + dh * hAlpha : hTarget
                 displayedSelectedHeightRef.current = nextH
+                // Recenter target Y using current displayed height
+                const selectedTop = selectedIndexRef.current * (baseH + GAP_PX)
+                const desiredY = selectedTop - (Hloc / 2 - nextH / 2)
+                virtualYRef.current = Math.max(0, Math.min(maxVirtualYRef.current, desiredY))
             } else if (displayedSelectedHeightRef.current != null) {
                 const baseH = Math.max(0, slotHeight - GAP_PX)
                 const hCurrent = displayedSelectedHeightRef.current
