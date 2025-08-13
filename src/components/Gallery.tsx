@@ -17,6 +17,10 @@ export default function Gallery() {
     const lastWheelTsRef = useRef<number>(performance.now())
     const rafIdRef = useRef<number | null>(null)
     const resetScaleTimerRef = useRef<number | null>(null)
+    // Selection (step 2: smooth height easing, no centering yet)
+    const selectedIndexRef = useRef<number | null>(null)
+    const targetSelectedHeightRef = useRef<number | null>(null)
+    const displayedSelectedHeightRef = useRef<number | null>(null)
 
     // Desired visual gap between items
     const GAP_PX = 24
@@ -45,26 +49,34 @@ export default function Gallery() {
         const parent = itemsContainerRef.current
         if (!parent) return
         const scale = displayedScaleRef.current
-        // Position children at their baseY; parent will handle scroll and scale transforms
+        // Cumulative layout to support a single selected item with 70% viewport height
+        const baseItemHeight = Math.max(0, slotHeight - GAP_PX)
+        const H = typeof height === 'number' ? height : 800
+        const selectedIdx = selectedIndexRef.current
+        const selectedHeight = displayedSelectedHeightRef.current ?? Math.round(H * 0.7)
+        let cumulativeTop = 0
         for (let i = 0; i < parent.children.length; i += 1) {
             const child = parent.children[i] as HTMLElement
-            const baseY = i * slotHeight
+            const itemH = selectedIdx !== null && i === selectedIdx ? selectedHeight : baseItemHeight
             child.style.position = 'absolute'
             child.style.left = '0px'
-            child.style.top = `${baseY}px`
+            child.style.top = `${cumulativeTop}px`
+            child.style.height = `${itemH}px`
             child.style.transform = 'none'
             child.style.transformOrigin = 'center'
+            cumulativeTop += itemH + GAP_PX
         }
-    // Set parent height to unscaled total so layout math remains stable
-    parent.style.height = `${slotHeight * galleryItems.length}px`
-    parent.style.willChange = 'transform'
-    // Center horizontally; anchor vertical scaling at current displayed Y to avoid jumps
-    parent.style.left = '50%'
-    const anchorY = displayedYRef.current
-    parent.style.transformOrigin = `50% ${anchorY}px`
-    const t = -displayedYRef.current
-    parent.style.transform = `translateX(-50%) translateY(${t}px) scale(${scale})`
-    }, [slotHeight])
+        // Set parent height to unscaled total so layout math remains stable
+        const parentHeight = Math.max(0, cumulativeTop - GAP_PX)
+        parent.style.height = `${parentHeight}px`
+        parent.style.willChange = 'transform'
+        // Center horizontally; anchor vertical scaling at current displayed Y to avoid jumps
+        parent.style.left = '50%'
+        const anchorY = displayedYRef.current
+        parent.style.transformOrigin = `50% ${anchorY}px`
+        const t = -displayedYRef.current
+        parent.style.transform = `translateX(-50%) translateY(${t}px) scale(${scale})`
+    }, [slotHeight, height])
     // Tempus-driven easing loop (translate and scale based on velocity)
     useEffect(() => {
         if (!Tempus.isPlaying) Tempus.play()
@@ -79,6 +91,29 @@ export default function Gallery() {
                 displayedYRef.current += dy * posAlpha
             } else {
                 displayedYRef.current = virtualYRef.current
+            }
+            // Smoothly ease selected item height toward target (no centering yet)
+            if (selectedIndexRef.current !== null) {
+                const Hloc = typeof height === 'number' ? height : 800
+                const baseH = Math.max(0, slotHeight - GAP_PX)
+                const hTarget = targetSelectedHeightRef.current ?? Math.round(Hloc * 0.7)
+                targetSelectedHeightRef.current = hTarget
+                const hCurrent = displayedSelectedHeightRef.current ?? baseH
+                const hAlpha = 1 - Math.pow(0.001, dt)
+                const dh = hTarget - hCurrent
+                const nextH = Math.abs(dh) > 0.1 ? hCurrent + dh * hAlpha : hTarget
+                displayedSelectedHeightRef.current = nextH
+            } else if (displayedSelectedHeightRef.current != null) {
+                const baseH = Math.max(0, slotHeight - GAP_PX)
+                const hCurrent = displayedSelectedHeightRef.current
+                const dh = baseH - hCurrent
+                const hAlpha = 1 - Math.pow(0.001, dt)
+                const nextH = Math.abs(dh) > 0.1 ? hCurrent + dh * hAlpha : baseH
+                displayedSelectedHeightRef.current = nextH
+                if (Math.abs(nextH - baseH) <= 0.1) {
+                    displayedSelectedHeightRef.current = null
+                    targetSelectedHeightRef.current = null
+                }
             }
             // Ease scale toward target
             const scaleAlpha = 1 - Math.pow(0.05, dt)
@@ -121,6 +156,21 @@ export default function Gallery() {
         }
     }, [maxVirtualYRef])
 
+    // Click to toggle selection height (smooth height easing only)
+    const onItemClick = useCallback((index: number) => {
+        const Hloc = typeof height === 'number' ? height : 800
+        const baseH = Math.max(0, slotHeight - GAP_PX)
+        if (selectedIndexRef.current === index) {
+            selectedIndexRef.current = null
+            targetSelectedHeightRef.current = baseH
+            if (displayedSelectedHeightRef.current == null) displayedSelectedHeightRef.current = baseH
+        } else {
+            selectedIndexRef.current = index
+            targetSelectedHeightRef.current = Math.round(Hloc * 0.7)
+            if (displayedSelectedHeightRef.current == null) displayedSelectedHeightRef.current = baseH
+        }
+    }, [height, slotHeight])
+
     // Measure first item height when viewport changes (or on mount)
     useEffect(() => {
         const parent = itemsContainerRef.current
@@ -156,11 +206,12 @@ export default function Gallery() {
                 ref={itemsContainerRef}
                 style={{ position: 'relative', height: '100%', width: 500 }}
             >
-                {galleryItems.map(item => {
+                {galleryItems.map((item, index) => {
                     return (
                         <article
                             className='gallery-item'
                             key={item.id}
+                            onClick={() => onItemClick(index)}
                             style={{ position: 'absolute', left: 0, top: 0, width: '100%', willChange: 'transform' }}
                         >
                             <div className='label'>
