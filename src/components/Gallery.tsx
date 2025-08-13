@@ -27,6 +27,7 @@ export default function Gallery() {
 
     // Desired visual gap between items
     const GAP_PX = 24
+    const GAP = 24
     // Note: buffer not needed with parent-scaling approach
 
     // Slot height is measured from the rendered first item height + GAP_PX
@@ -53,7 +54,7 @@ export default function Gallery() {
         if (!parent) return
         const scale = displayedScaleRef.current
         // Cumulative layout to support a single selected item with 70% viewport height
-        const baseItemHeight = Math.max(0, slotHeight - GAP_PX)
+        const baseItemHeight = Math.max(0, slotHeight - GAP)
         const Hloc1 = typeof height === 'number' ? height : 800
         const topPad = Math.round(Hloc1 * 0.2)
         const selectedIdx = selectedIndexRef.current
@@ -75,12 +76,12 @@ export default function Gallery() {
             child.style.width = `${itemW}px`
             child.style.transform = 'none'
             child.style.transformOrigin = 'center'
-            cumulativeTop += itemH + GAP_PX
+            cumulativeTop += itemH + GAP
         }
         // Set parent height; when selected, add bottom padding to allow centering near end
         const Hloc2 = typeof height === 'number' ? height : 800
         const bottomPad = Math.round(Hloc2 * 0.4)
-        const parentHeight = Math.max(0, cumulativeTop - GAP_PX) + bottomPad
+        const parentHeight = Math.max(0, cumulativeTop - GAP) + bottomPad
         parent.style.height = `${parentHeight}px`
         parentHeightRef.current = parentHeight
         parent.style.willChange = 'transform'
@@ -109,7 +110,7 @@ export default function Gallery() {
             // Smoothly ease selected item height toward target AND recenter
             if (selectedIndexRef.current !== null) {
                 const Hloc = typeof height === 'number' ? height : 800
-                const baseH = Math.max(0, slotHeight - GAP_PX)
+                const baseH = Math.max(0, slotHeight - GAP)
                 const hTarget = targetSelectedHeightRef.current ?? Math.round(Hloc * 0.6)
                 targetSelectedHeightRef.current = hTarget
                 const hCurrent = displayedSelectedHeightRef.current ?? baseH
@@ -123,7 +124,7 @@ export default function Gallery() {
                 for (let j = 0; j < (selectedIndexRef.current ?? 0); j += 1) {
                     const persisted = expandedHeightsRef.current.get(j)
                     const prevH = persisted ?? baseH
-                    sumPrev += prevH + GAP_PX
+                    sumPrev += prevH + GAP
                 }
                 const selectedTop = topPadLoc + sumPrev
                 const desiredY = selectedTop - (Hloc / 2 - hTarget / 2)
@@ -131,7 +132,7 @@ export default function Gallery() {
                 virtualYRef.current = Math.max(0, Math.min(dynMaxY, desiredY))
                 // Do not auto-deselect; persistence happens on wheel
             } else if (displayedSelectedHeightRef.current != null) {
-                const baseH = Math.max(0, slotHeight - GAP_PX)
+                const baseH = Math.max(0, slotHeight - GAP)
                 const hCurrent = displayedSelectedHeightRef.current
                 const dh = baseH - hCurrent
                 const hAlpha = 1 - Math.pow(0.001, dt)
