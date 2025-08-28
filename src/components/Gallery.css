@@ -2,8 +2,10 @@
    items stacked vertically with plenty of white space. */
 
 .gallery {
-  display: grid;
-  gap: 4rem;
+  width: 500px;
+  overflow: visible;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .gallery-item {
@@ -26,11 +28,9 @@
 /* Tall image ratio for dramatic look */
 .image-wrapper {
   position: relative;
-  width: 100%;
   overflow: hidden;
   border-radius: 8px;
   height: 100%;
-  width: 100%;
 }
 
 .image-wrapper img {
