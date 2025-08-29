@@ -5,12 +5,32 @@ import { useLenis } from 'lenis/react'
 import { useRect } from 'hamo'
 import { GalleryItem } from './galleryItem'
 
+// Constants for reusable styles and animations
+const WEBKIT_TRANSFORM_STYLES = {
+    transformStyle: 'preserve-3d' as const,
+    WebkitTransformStyle: 'preserve-3d' as const,
+    backfaceVisibility: 'hidden' as const,
+    WebkitBackfaceVisibility: 'hidden' as const,
+    transformOrigin: 'center center' as const,
+    WebkitTransformOrigin: 'center center' as const,
+}
+
+const GSAP_3D_CONFIG = {
+    force3D: true,
+}
+
+const getPerspectiveOriginConfig = (y: string) => ({
+    perspectiveOrigin: `center ${y}`,
+    webkitPerspectiveOrigin: `center ${y}`,
+})
+
 export const Gallery2 = () => {
     const containerRef = useRef<HTMLDivElement>(null)
     const itemsRef = useRef<HTMLDivElement>(null)
     const sectionRef = useRef<HTMLElement>(null)
     const zState = useRef(-600)
     const [setRectRef] = useRect()
+    const selectedItem = useRef<HTMLElement | null>(null)
 
     // Initial slide-up animation to fix Safari 3D transform bug
     useEffect(() => {
@@ -19,11 +39,10 @@ export const Gallery2 = () => {
             const tl = gsap.timeline()
             tl.to(sectionRef.current, {
                 perspective: 1000,
-                perspectiveOrigin: 'center 0%',
                 webkitPerspective: 1000,
-                webkitPerspectiveOrigin: 'center 0%',
                 duration: 0.1,
-                force3D: true,
+                ...GSAP_3D_CONFIG,
+                ...getPerspectiveOriginConfig('0%'),
             })
             tl.fromTo(
                 itemsRef.current,
@@ -33,19 +52,20 @@ export const Gallery2 = () => {
                 {
                     transform: 'translate3d(0, 0, 0)',
                     duration: 0.3,
-                    force3D: true,
+                    ...GSAP_3D_CONFIG,
                 },
             )
             tl.to(itemsRef.current, {
                 transform: 'translate3d(0, 0, -601px)',
                 duration: 0.1,
-                force3D: true,
+                ...GSAP_3D_CONFIG,
                 onComplete: () => {
                     lenis?.scrollTo(0)
                     lenis?.start()
                     sectionRef.current?.setAttribute('data-active', 'true')
                 },
             })
+
         }
     }, [])
 
@@ -56,10 +76,11 @@ export const Gallery2 = () => {
         if (
             !itemsElement ||
             !sectionElement ||
-            !sectionElement.hasAttribute('data-active')
+            !sectionElement.hasAttribute('data-active') ||
+            zState.current > -300
         )
             return
-        console.log('SCROLLING - Height:', itemsRef.current?.offsetHeight)
+
         // Map velocity to translateZ: faster scroll = more negative (up to -40px)
         // Default is -20px when not scrolling
         const maxVelocity = 200 // Adjust this to control sensitivity
@@ -70,7 +91,7 @@ export const Gallery2 = () => {
             z: newTranslateZ,
             duration: 0.5,
             ease: 'power4.out',
-            force3D: true,
+            ...GSAP_3D_CONFIG,
         })
 
         // Calculate scroll progress (0 to 1)
@@ -79,8 +100,7 @@ export const Gallery2 = () => {
 
         // Update perspective origin directly without animation
         gsap.set(sectionElement, {
-            perspectiveOrigin: `center ${perspectiveY}%`,
-            webkitPerspectiveOrigin: `center ${perspectiveY}%`,
+            ...getPerspectiveOriginConfig(`${perspectiveY}%`),
         })
     })
 
@@ -99,7 +119,8 @@ export const Gallery2 = () => {
                 easing: (t: number) => 1 - Math.pow(1 - t, 3), // expo.out
             })
         }
-
+        containerRef.current?.setAttribute('data-scale', '1')
+        selectedItem.current = el
         // Check if element is already scaled to avoid recalculation
         if (el.hasAttribute('data-scaled')) {
             return
@@ -132,7 +153,7 @@ export const Gallery2 = () => {
             width: 5000,
             maxWidth: 5000,
             x: translateX,
-            force3D: true,
+            ...GSAP_3D_CONFIG,
             onComplete: () => {
                 // Mark element as scaled to prevent future recalculations
                 el.setAttribute('data-scaled', 'true')
@@ -158,11 +179,9 @@ export const Gallery2 = () => {
                             ease: 'power2.out',
                             delay: 0.2,
                             display: 'flex',
-                            force3D: true,
+                            ...GSAP_3D_CONFIG,
                         },
                     )
-
-                    // Animate to visible state
                 }
             },
         })
@@ -184,14 +203,9 @@ export const Gallery2 = () => {
                 style={{
                     overflow: 'visible',
                     position: 'relative',
-                    transformStyle: 'preserve-3d',
-                    WebkitTransformStyle: 'preserve-3d',
-                    backfaceVisibility: 'hidden',
-                    WebkitBackfaceVisibility: 'hidden',
-                    transformOrigin: 'center center',
-                    WebkitTransformOrigin: 'center center',
                     willChange: 'transform',
                     WebkitTransform: 'translateZ(0)',
+                    ...WEBKIT_TRANSFORM_STYLES,
                 }}
             >
                 <div
@@ -202,10 +216,7 @@ export const Gallery2 = () => {
                         position: 'relative',
                         width: 500,
                         overflow: 'visible',
-                        backfaceVisibility: 'hidden',
-                        WebkitBackfaceVisibility: 'hidden',
-                        transformOrigin: 'center center',
-                        WebkitTransformOrigin: 'center center',
+                        ...WEBKIT_TRANSFORM_STYLES,
                     }}
                 >
                     {galleryItems.map(item => (
